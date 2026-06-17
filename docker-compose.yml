@@ -1,0 +1,16 @@
+services:
+  wishlist-api:
+    build: .
+    restart: unless-stopped
+    expose:
+      - "3001"
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DATABASE_PATH: /app/data/wishlist.json
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    volumes:
+      - wishlist-data:/app/data
+
+volumes:
+  wishlist-data:
