@@ -2,13 +2,38 @@ import { chromium } from 'playwright-core'
 import type { ParsedOzonProduct } from '../types/index.js'
 import { parseWidgetStates } from './ozon-parser.js'
 
+const CHROMIUM_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-blink-features=AutomationControlled',
+]
+
+async function fetchComposerInBrowser(
+  productPath: string,
+  page: import('playwright-core').Page,
+): Promise<Record<string, string> | null> {
+  return page.evaluate(async (path) => {
+    const response = await fetch(
+      `https://www.ozon.ru/api/composer-api.bx/page/json/v2?url=${encodeURIComponent(path)}`,
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json, text/plain, */*' },
+      },
+    )
+    if (!response.ok) return null
+    const json = (await response.json()) as { widgetStates?: Record<string, string> }
+    return json.widgetStates ?? null
+  }, productPath)
+}
+
 export async function parseOzonWithPlaywright(
   productUrl: string,
   productPath: string,
 ): Promise<Partial<ParsedOzonProduct>> {
   const browser = await chromium.launch({
     headless: true,
-    args: ['--disable-blink-features=AutomationControlled'],
+    args: CHROMIUM_ARGS,
   })
 
   try {
@@ -17,6 +42,9 @@ export async function parseOzonWithPlaywright(
       userAgent:
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       viewport: { width: 1366, height: 900 },
+      extraHTTPHeaders: {
+        'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
     })
     const page = await context.newPage()
 
@@ -35,10 +63,14 @@ export async function parseOzonWithPlaywright(
 
     await page.goto(productUrl, {
       waitUntil: 'domcontentloaded',
-      timeout: 45_000,
+      timeout: 60_000,
     })
 
-    await page.waitForTimeout(2500)
+    await page.waitForTimeout(4000)
+
+    if (!widgetStates) {
+      widgetStates = await fetchComposerInBrowser(productPath, page)
+    }
 
     if (widgetStates) {
       return parseWidgetStates(widgetStates)

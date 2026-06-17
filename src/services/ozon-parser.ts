@@ -413,6 +413,7 @@ export async function parseOzonProduct(inputUrl: string): Promise<ParsedOzonProd
       const browserParsed = await parseOzonWithPlaywright(resolvedUrl, productPath)
       parsed = { ...browserParsed, ...parsed }
     } catch (error) {
+      console.error('[ozon] Playwright parser failed:', error)
       if (!parsed.title) {
         throw error instanceof OzonParseError
           ? error
