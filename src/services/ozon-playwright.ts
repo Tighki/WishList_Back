@@ -1,4 +1,4 @@
-import { chromium } from 'playwright-core'
+import { chromium, type Page, type Response } from 'playwright-core'
 import type { ParsedOzonProduct } from '../types/index.js'
 import { parseWidgetStates } from './ozon-parser.js'
 
@@ -11,9 +11,9 @@ const CHROMIUM_ARGS = [
 
 async function fetchComposerInBrowser(
   productPath: string,
-  page: import('playwright-core').Page,
+  page: Page,
 ): Promise<Record<string, string> | null> {
-  return page.evaluate(async (path) => {
+  return page.evaluate(async (path: string) => {
     const response = await fetch(
       `https://www.ozon.ru/api/composer-api.bx/page/json/v2?url=${encodeURIComponent(path)}`,
       {
@@ -50,7 +50,7 @@ export async function parseOzonWithPlaywright(
 
     let widgetStates: Record<string, string> | null = null
 
-    page.on('response', async (response) => {
+    page.on('response', async (response: Response) => {
       if (!response.url().includes('composer-api.bx/page/json/v2')) return
       if (response.status() !== 200) return
       try {
