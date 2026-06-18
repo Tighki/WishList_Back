@@ -1,7 +1,8 @@
 node_modules
 dist
 data
-browser-profile
 .env
 .env.*
 *.log
+.git
+docker-compose.yml

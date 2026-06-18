@@ -1,20 +1,36 @@
-export interface ParsedOzonProduct {
-  url: string
+export interface WishlistDto {
+  id: string
+  slug: string
   title: string
-  description: string
-  price: number
-  imageUrl: string
-  ozonId?: string
+  editToken: string
+  createdAt: string
+}
+
+export interface WishlistPublicDto {
+  id: string
+  slug: string
+  title: string
+  createdAt: string
 }
 
 export interface WishlistItemDto {
   id: string
-  url: string
+  wishlistId: string
   title: string
   description: string
   price: number
   quantity: number
   imageUrl: string
+  url: string
   purchased: boolean
   createdAt: string
+}
+
+export type CreateItemInput = {
+  title: string
+  description?: string
+  price: number
+  imageUrl?: string
+  url?: string
+  quantity?: number
 }
