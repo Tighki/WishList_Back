@@ -21,6 +21,11 @@ export interface WishlistPublicDto {
   createdAt: string
 }
 
+export interface WishlistSummaryDto extends WishlistPublicDto {
+  itemCount: number
+  total: number
+}
+
 export interface WishlistItemDto {
   id: string
   wishlistId: string

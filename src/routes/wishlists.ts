@@ -9,6 +9,10 @@ const createWishlistSchema = z.object({
   title: z.string().trim().max(120).optional(),
 })
 
+const patchWishlistSchema = z.object({
+  title: z.string().trim().min(1, 'Укажите название').max(120),
+})
+
 const createItemSchema = z.object({
   title: z.string().trim().min(1, 'Укажите название').max(200),
   description: z.string().trim().max(2000).optional(),
@@ -54,10 +58,8 @@ export const wishlistsRouter = Router()
 
 wishlistsRouter.get('/mine', requireAuth, async (req, res, next) => {
   try {
-    const wishlists = await wishlistRepository.findByOwner(req.userId!)
-    res.json({
-      wishlists: wishlists.map(toPublicWishlist),
-    })
+    const wishlists = await wishlistRepository.findSummariesByOwner(req.userId!)
+    res.json({ wishlists })
   } catch (error) {
     next(error)
   }
@@ -95,6 +97,20 @@ wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
       items,
       canEdit: canEditWishlist(wishlist, req.userId, editTokenHeader),
     })
+  } catch (error) {
+    next(error)
+  }
+})
+
+wishlistsRouter.patch('/:slug', optionalAuth, requireWishlistEditor, async (req, res, next) => {
+  try {
+    const { title } = patchWishlistSchema.parse(req.body)
+    const wishlist = await wishlistRepository.updateWishlist(req.wishlist!.id, { title })
+    if (!wishlist) {
+      res.status(404).json({ error: 'Вишлист не найден', code: 'NOT_FOUND' })
+      return
+    }
+    res.json({ wishlist: toPublicWishlist(wishlist) })
   } catch (error) {
     next(error)
   }

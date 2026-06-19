@@ -1,6 +1,6 @@
 import crypto from 'node:crypto'
 import type { RowDataPacket } from 'mysql2/promise'
-import type { CreateItemInput, WishlistDto, WishlistItemDto } from '../types/index.js'
+import type { CreateItemInput, WishlistDto, WishlistItemDto, WishlistSummaryDto } from '../types/index.js'
 import { getPool } from './pool.js'
 
 interface WishlistRow extends RowDataPacket {
@@ -10,6 +10,15 @@ interface WishlistRow extends RowDataPacket {
   edit_token: string
   owner_id: string | null
   created_at: Date
+}
+
+interface WishlistSummaryRow extends RowDataPacket {
+  id: string
+  slug: string
+  title: string
+  created_at: Date
+  item_count: string | number
+  total: string | number
 }
 
 interface WishlistItemRow extends RowDataPacket {
@@ -122,6 +131,58 @@ export const wishlistRepository = {
       [ownerId],
     )
     return rows.map(mapWishlist)
+  },
+
+  async findSummariesByOwner(ownerId: string): Promise<WishlistSummaryDto[]> {
+    const pool = getPool()
+    const [rows] = await pool.execute<WishlistSummaryRow[]>(
+      `SELECT
+         w.id,
+         w.slug,
+         w.title,
+         w.created_at,
+         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.quantity ELSE 0 END), 0) AS item_count,
+         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total
+       FROM wishlists w
+       LEFT JOIN wishlist_items i ON i.wishlist_id = w.id
+       WHERE w.owner_id = ?
+       GROUP BY w.id, w.slug, w.title, w.created_at
+       ORDER BY w.created_at DESC`,
+      [ownerId],
+    )
+
+    return rows.map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      createdAt: toIsoString(row.created_at),
+      itemCount: Number(row.item_count),
+      total: Number(row.total),
+    }))
+  },
+
+  async updateWishlist(
+    wishlistId: string,
+    patch: { title: string },
+  ): Promise<WishlistDto | null> {
+    const pool = getPool()
+    const title = patch.title.trim()
+    if (!title) return null
+
+    const [result] = await pool.execute(
+      'UPDATE wishlists SET title = ? WHERE id = ?',
+      [title, wishlistId],
+    )
+
+    if (!('affectedRows' in result) || result.affectedRows === 0) {
+      return null
+    }
+
+    const [rows] = await pool.execute<WishlistRow[]>(
+      `SELECT ${WISHLIST_COLUMNS} FROM wishlists WHERE id = ? LIMIT 1`,
+      [wishlistId],
+    )
+    return rows[0] ? mapWishlist(rows[0]) : null
   },
 
   async verifyEditToken(slug: string, token: string): Promise<WishlistDto | null> {
