@@ -42,10 +42,10 @@ function toPublicWishlist(wishlist: {
 
 export const wishlistsRouter = Router()
 
-wishlistsRouter.post('/', (req, res, next) => {
+wishlistsRouter.post('/', async (req, res, next) => {
   try {
     const { title } = createWishlistSchema.parse(req.body ?? {})
-    const { wishlist, editToken } = wishlistRepository.createWishlist(title ?? 'Мой вишлист')
+    const { wishlist, editToken } = await wishlistRepository.createWishlist(title ?? 'Мой вишлист')
     res.status(201).json({
       wishlist: toPublicWishlist(wishlist),
       editToken,
@@ -55,35 +55,40 @@ wishlistsRouter.post('/', (req, res, next) => {
   }
 })
 
-wishlistsRouter.get('/:slug', (req, res) => {
-  const slug = typeof req.params.slug === 'string' ? req.params.slug : ''
-  const wishlist = wishlistRepository.findBySlug(slug)
-  if (!wishlist) {
-    res.status(404).json({ error: 'Вишлист не найден', code: 'NOT_FOUND' })
-    return
-  }
+wishlistsRouter.get('/:slug', async (req, res, next) => {
+  try {
+    const slug = typeof req.params.slug === 'string' ? req.params.slug : ''
+    const wishlist = await wishlistRepository.findBySlug(slug)
+    if (!wishlist) {
+      res.status(404).json({ error: 'Вишлист не найден', code: 'NOT_FOUND' })
+      return
+    }
 
-  res.json({
-    wishlist: toPublicWishlist(wishlist),
-    items: wishlistRepository.findItems(wishlist.id),
-  })
+    const items = await wishlistRepository.findItems(wishlist.id)
+    res.json({
+      wishlist: toPublicWishlist(wishlist),
+      items,
+    })
+  } catch (error) {
+    next(error)
+  }
 })
 
-wishlistsRouter.post('/:slug/items', requireEditToken, (req, res, next) => {
+wishlistsRouter.post('/:slug/items', requireEditToken, async (req, res, next) => {
   try {
     const input = createItemSchema.parse(req.body)
-    const item = wishlistRepository.createItem(req.wishlist!.id, input)
+    const item = await wishlistRepository.createItem(req.wishlist!.id, input)
     res.status(201).json({ item })
   } catch (error) {
     next(error)
   }
 })
 
-wishlistsRouter.patch('/:slug/items/:id', requireEditToken, (req, res, next) => {
+wishlistsRouter.patch('/:slug/items/:id', requireEditToken, async (req, res, next) => {
   try {
     const patch = patchItemSchema.parse(req.body)
     const itemId = typeof req.params.id === 'string' ? req.params.id : ''
-    const item = wishlistRepository.updateItem(req.wishlist!.id, itemId, patch)
+    const item = await wishlistRepository.updateItem(req.wishlist!.id, itemId, patch)
     if (!item) {
       res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
       return
@@ -94,12 +99,16 @@ wishlistsRouter.patch('/:slug/items/:id', requireEditToken, (req, res, next) => 
   }
 })
 
-wishlistsRouter.delete('/:slug/items/:id', requireEditToken, (req, res) => {
-  const itemId = typeof req.params.id === 'string' ? req.params.id : ''
-  const deleted = wishlistRepository.deleteItem(req.wishlist!.id, itemId)
-  if (!deleted) {
-    res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
-    return
+wishlistsRouter.delete('/:slug/items/:id', requireEditToken, async (req, res, next) => {
+  try {
+    const itemId = typeof req.params.id === 'string' ? req.params.id : ''
+    const deleted = await wishlistRepository.deleteItem(req.wishlist!.id, itemId)
+    if (!deleted) {
+      res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
+      return
+    }
+    res.status(204).send()
+  } catch (error) {
+    next(error)
   }
-  res.status(204).send()
 })

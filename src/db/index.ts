@@ -1,97 +1,123 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
+import type { RowDataPacket } from 'mysql2/promise'
 import type { CreateItemInput, WishlistDto, WishlistItemDto } from '../types/index.js'
+import { getPool } from './pool.js'
 
-const dataDir = path.resolve(process.cwd(), 'data')
-const storePath = process.env.DATABASE_PATH ?? path.join(dataDir, 'wishlist.json')
-
-interface StoreFile {
-  wishlists: WishlistDto[]
-  items: WishlistItemDto[]
+interface WishlistRow extends RowDataPacket {
+  id: string
+  slug: string
+  title: string
+  edit_token: string
+  created_at: Date
 }
 
-function ensureStore(): StoreFile {
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true })
-  }
+interface WishlistItemRow extends RowDataPacket {
+  id: string
+  wishlist_id: string
+  title: string
+  description: string
+  price: string | number
+  quantity: number
+  image_url: string
+  url: string
+  purchased: number
+  created_at: Date
+}
 
-  if (!fs.existsSync(storePath)) {
-    const empty: StoreFile = { wishlists: [], items: [] }
-    fs.writeFileSync(storePath, JSON.stringify(empty, null, 2), 'utf-8')
-    return empty
-  }
+function toIsoString(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
+}
 
-  const raw = fs.readFileSync(storePath, 'utf-8')
-  const parsed = JSON.parse(raw) as Partial<StoreFile>
+function mapWishlist(row: WishlistRow): WishlistDto {
   return {
-    wishlists: parsed.wishlists ?? [],
-    items: (parsed.items ?? []).map(normalizeItem),
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    editToken: row.edit_token,
+    createdAt: toIsoString(row.created_at),
   }
 }
 
-function writeStore(store: StoreFile): void {
-  fs.writeFileSync(storePath, JSON.stringify(store, null, 2), 'utf-8')
-}
-
-function normalizeItem(item: WishlistItemDto): WishlistItemDto {
+function mapItem(row: WishlistItemRow): WishlistItemDto {
   return {
-    ...item,
-    quantity: item.quantity && item.quantity > 0 ? item.quantity : 1,
-    description: item.description ?? '',
-    imageUrl: item.imageUrl ?? '',
-    url: item.url ?? '',
+    id: row.id,
+    wishlistId: row.wishlist_id,
+    title: row.title,
+    description: row.description ?? '',
+    price: Number(row.price),
+    quantity: row.quantity > 0 ? row.quantity : 1,
+    imageUrl: row.image_url ?? '',
+    url: row.url ?? '',
+    purchased: Boolean(row.purchased),
+    createdAt: toIsoString(row.created_at),
   }
 }
 
-function createSlug(store: StoreFile): string {
+async function createSlug(): Promise<string> {
+  const pool = getPool()
   for (let attempt = 0; attempt < 10; attempt++) {
     const slug = crypto.randomBytes(6).toString('base64url')
-    if (!store.wishlists.some((wishlist) => wishlist.slug === slug)) {
-      return slug
-    }
+    const [rows] = await pool.execute<RowDataPacket[]>(
+      'SELECT id FROM wishlists WHERE slug = ? LIMIT 1',
+      [slug],
+    )
+    if (rows.length === 0) return slug
   }
   return crypto.randomUUID().replace(/-/g, '').slice(0, 12)
 }
 
 export const wishlistRepository = {
-  createWishlist(title: string): { wishlist: WishlistDto; editToken: string } {
-    const store = ensureStore()
+  async createWishlist(title: string): Promise<{ wishlist: WishlistDto; editToken: string }> {
+    const pool = getPool()
     const editToken = crypto.randomUUID()
     const wishlist: WishlistDto = {
       id: crypto.randomUUID(),
-      slug: createSlug(store),
+      slug: await createSlug(),
       title: title.trim() || 'Мой вишлист',
       editToken,
       createdAt: new Date().toISOString(),
     }
-    store.wishlists.push(wishlist)
-    writeStore(store)
+
+    await pool.execute(
+      `INSERT INTO wishlists (id, slug, title, edit_token, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [wishlist.id, wishlist.slug, wishlist.title, editToken, new Date(wishlist.createdAt)],
+    )
+
     return { wishlist, editToken }
   },
 
-  findBySlug(slug: string): WishlistDto | null {
-    const store = ensureStore()
-    return store.wishlists.find((wishlist) => wishlist.slug === slug) ?? null
+  async findBySlug(slug: string): Promise<WishlistDto | null> {
+    const pool = getPool()
+    const [rows] = await pool.execute<WishlistRow[]>(
+      'SELECT id, slug, title, edit_token, created_at FROM wishlists WHERE slug = ? LIMIT 1',
+      [slug],
+    )
+    return rows[0] ? mapWishlist(rows[0]) : null
   },
 
-  verifyEditToken(slug: string, token: string): WishlistDto | null {
-    const wishlist = this.findBySlug(slug)
+  async verifyEditToken(slug: string, token: string): Promise<WishlistDto | null> {
+    const wishlist = await this.findBySlug(slug)
     if (!wishlist || wishlist.editToken !== token) return null
     return wishlist
   },
 
-  findItems(wishlistId: string): WishlistItemDto[] {
-    const store = ensureStore()
-    return store.items
-      .filter((item) => item.wishlistId === wishlistId)
-      .map(normalizeItem)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  async findItems(wishlistId: string): Promise<WishlistItemDto[]> {
+    const pool = getPool()
+    const [rows] = await pool.execute<WishlistItemRow[]>(
+      `SELECT id, wishlist_id, title, description, price, quantity, image_url, url, purchased, created_at
+       FROM wishlist_items
+       WHERE wishlist_id = ?
+       ORDER BY created_at DESC`,
+      [wishlistId],
+    )
+    return rows.map(mapItem)
   },
 
-  createItem(wishlistId: string, input: CreateItemInput): WishlistItemDto {
-    const store = ensureStore()
-    const created: WishlistItemDto = normalizeItem({
+  async createItem(wishlistId: string, input: CreateItemInput): Promise<WishlistItemDto> {
+    const pool = getPool()
+    const createdAt = new Date().toISOString()
+    const item: WishlistItemDto = {
       id: crypto.randomUUID(),
       wishlistId,
       title: input.title.trim(),
@@ -101,43 +127,85 @@ export const wishlistRepository = {
       imageUrl: input.imageUrl?.trim() ?? '',
       url: input.url?.trim() ?? '',
       purchased: false,
-      createdAt: new Date().toISOString(),
-    })
-    store.items.unshift(created)
-    writeStore(store)
-    return created
-  },
+      createdAt,
+    }
 
-  deleteItem(wishlistId: string, itemId: string): boolean {
-    const store = ensureStore()
-    const before = store.items.length
-    store.items = store.items.filter(
-      (item) => !(item.wishlistId === wishlistId && item.id === itemId),
+    await pool.execute(
+      `INSERT INTO wishlist_items
+        (id, wishlist_id, title, description, price, quantity, image_url, url, purchased, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        item.id,
+        item.wishlistId,
+        item.title,
+        item.description,
+        item.price,
+        item.quantity,
+        item.imageUrl,
+        item.url,
+        item.purchased ? 1 : 0,
+        new Date(createdAt),
+      ],
     )
-    if (store.items.length === before) return false
-    writeStore(store)
-    return true
+
+    return item
   },
 
-  updateItem(
+  async deleteItem(wishlistId: string, itemId: string): Promise<boolean> {
+    const pool = getPool()
+    const [result] = await pool.execute(
+      'DELETE FROM wishlist_items WHERE wishlist_id = ? AND id = ?',
+      [wishlistId, itemId],
+    )
+    return 'affectedRows' in result && result.affectedRows > 0
+  },
+
+  async updateItem(
     wishlistId: string,
     itemId: string,
     patch: { purchased?: boolean; quantity?: number },
-  ): WishlistItemDto | null {
-    const store = ensureStore()
-    const item = store.items.find(
-      (entry) => entry.wishlistId === wishlistId && entry.id === itemId,
-    )
-    if (!item) return null
+  ): Promise<WishlistItemDto | null> {
+    const pool = getPool()
+    const updates: string[] = []
+    const values: Array<string | number | boolean> = []
 
     if (patch.purchased !== undefined) {
-      item.purchased = patch.purchased
+      updates.push('purchased = ?')
+      values.push(patch.purchased ? 1 : 0)
     }
     if (patch.quantity !== undefined) {
-      item.quantity = patch.quantity
+      updates.push('quantity = ?')
+      values.push(patch.quantity)
     }
 
-    writeStore(store)
-    return normalizeItem(item)
+    if (updates.length === 0) {
+      const [rows] = await pool.execute<WishlistItemRow[]>(
+        `SELECT id, wishlist_id, title, description, price, quantity, image_url, url, purchased, created_at
+         FROM wishlist_items
+         WHERE wishlist_id = ? AND id = ?
+         LIMIT 1`,
+        [wishlistId, itemId],
+      )
+      return rows[0] ? mapItem(rows[0]) : null
+    }
+
+    values.push(wishlistId, itemId)
+    const [result] = await pool.execute(
+      `UPDATE wishlist_items SET ${updates.join(', ')} WHERE wishlist_id = ? AND id = ?`,
+      values,
+    )
+
+    if (!('affectedRows' in result) || result.affectedRows === 0) {
+      return null
+    }
+
+    const [rows] = await pool.execute<WishlistItemRow[]>(
+      `SELECT id, wishlist_id, title, description, price, quantity, image_url, url, purchased, created_at
+       FROM wishlist_items
+       WHERE wishlist_id = ? AND id = ?
+       LIMIT 1`,
+      [wishlistId, itemId],
+    )
+    return rows[0] ? mapItem(rows[0]) : null
   },
 }
