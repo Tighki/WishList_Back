@@ -1,8 +1,12 @@
 import { Router } from 'express'
 import { z } from 'zod'
+import { memberRepository } from '../db/members.js'
 import { wishlistRepository } from '../db/index.js'
+import { canEditWishlist, isWishlistOwner } from '../lib/wishlist-access.js'
 import { optionalAuth, requireAuth } from '../middleware/auth.js'
 import { requireWishlistEditor } from '../middleware/require-wishlist-editor.js'
+import { requireWishlistOwner } from '../middleware/require-wishlist-owner.js'
+import { wishlistMembersRouter } from './wishlist-members.js'
 import type { WishlistPublicDto } from '../types/index.js'
 
 const createWishlistSchema = z.object({
@@ -45,20 +49,11 @@ function toPublicWishlist(wishlist: {
   }
 }
 
-function canEditWishlist(
-  wishlist: { ownerId: string | null; editToken: string },
-  userId: string | undefined,
-  editTokenHeader: string | undefined,
-): boolean {
-  if (userId && wishlist.ownerId === userId) return true
-  return Boolean(editTokenHeader && wishlist.editToken === editTokenHeader)
-}
-
 export const wishlistsRouter = Router()
 
 wishlistsRouter.get('/mine', requireAuth, async (req, res, next) => {
   try {
-    const wishlists = await wishlistRepository.findSummariesByOwner(req.userId!)
+    const wishlists = await wishlistRepository.findSummariesForUser(req.userId!)
     res.json({ wishlists })
   } catch (error) {
     next(error)
@@ -81,6 +76,8 @@ wishlistsRouter.post('/', optionalAuth, async (req, res, next) => {
   }
 })
 
+wishlistsRouter.use('/:slug/members', wishlistMembersRouter)
+
 wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
   try {
     const slug = typeof req.params.slug === 'string' ? req.params.slug : ''
@@ -92,19 +89,31 @@ wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
 
     const editTokenHeader = req.header('x-edit-token')?.trim()
     const items = await wishlistRepository.findItems(wishlist.id)
-    const canEdit = canEditWishlist(wishlist, req.userId, editTokenHeader)
+    const canEdit = await canEditWishlist(wishlist, req.userId, editTokenHeader)
+    const isOwner = isWishlistOwner(wishlist, req.userId)
+    const isMember =
+      Boolean(req.userId) &&
+      !isOwner &&
+      (await memberRepository.isMember(wishlist.id, req.userId!))
+
+    const members =
+      canEdit && req.userId ? await memberRepository.findMembers(wishlist.id) : undefined
+
     res.json({
       wishlist: toPublicWishlist(wishlist),
       items,
       canEdit,
-      ...(canEdit ? { editToken: wishlist.editToken } : {}),
+      isOwner,
+      isMember,
+      ...(members ? { members } : {}),
+      ...(isOwner && canEdit ? { editToken: wishlist.editToken } : {}),
     })
   } catch (error) {
     next(error)
   }
 })
 
-wishlistsRouter.patch('/:slug', optionalAuth, requireWishlistEditor, async (req, res, next) => {
+wishlistsRouter.patch('/:slug', optionalAuth, requireWishlistOwner, async (req, res, next) => {
   try {
     const { title } = patchWishlistSchema.parse(req.body)
     const wishlist = await wishlistRepository.updateWishlist(req.wishlist!.id, { title })
@@ -118,7 +127,7 @@ wishlistsRouter.patch('/:slug', optionalAuth, requireWishlistEditor, async (req,
   }
 })
 
-wishlistsRouter.delete('/:slug', optionalAuth, requireWishlistEditor, async (req, res, next) => {
+wishlistsRouter.delete('/:slug', requireAuth, requireWishlistOwner, async (req, res, next) => {
   try {
     const deleted = await wishlistRepository.deleteWishlist(req.wishlist!.id)
     if (!deleted) {

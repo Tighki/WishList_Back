@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express'
 import { wishlistRepository } from '../db/index.js'
+import { canEditWishlist } from '../lib/wishlist-access.js'
 import type { WishlistDto } from '../types/index.js'
 
 declare global {
@@ -30,10 +31,8 @@ export async function requireWishlistEditor(
       return
     }
 
-    const hasEditToken = Boolean(editToken && wishlist.editToken === editToken)
-    const isOwner = Boolean(req.userId && wishlist.ownerId === req.userId)
-
-    if (!hasEditToken && !isOwner) {
+    const allowed = await canEditWishlist(wishlist, req.userId, editToken)
+    if (!allowed) {
       res.status(403).json({ error: 'Нет доступа к редактированию', code: 'FORBIDDEN' })
       return
     }

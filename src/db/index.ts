@@ -19,6 +19,7 @@ interface WishlistSummaryRow extends RowDataPacket {
   created_at: Date
   item_count: string | number
   total: string | number
+  role: 'owner' | 'member'
 }
 
 interface WishlistItemRow extends RowDataPacket {
@@ -121,7 +122,7 @@ export const wishlistRepository = {
     return rows[0] ? mapWishlist(rows[0]) : null
   },
 
-  async findSummariesByOwner(ownerId: string): Promise<WishlistSummaryDto[]> {
+  async findSummariesForUser(userId: string): Promise<WishlistSummaryDto[]> {
     const pool = getPool()
     const [rows] = await pool.execute<WishlistSummaryRow[]>(
       `SELECT
@@ -130,13 +131,18 @@ export const wishlistRepository = {
          w.title,
          w.created_at,
          COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.quantity ELSE 0 END), 0) AS item_count,
-         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total
-       FROM wishlists w
+         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total,
+         CASE WHEN w.owner_id = ? THEN 'owner' ELSE 'member' END AS role
+       FROM (
+         SELECT id FROM wishlists WHERE owner_id = ?
+         UNION
+         SELECT wishlist_id AS id FROM wishlist_members WHERE user_id = ?
+       ) accessible
+       JOIN wishlists w ON w.id = accessible.id
        LEFT JOIN wishlist_items i ON i.wishlist_id = w.id
-       WHERE w.owner_id = ?
-       GROUP BY w.id, w.slug, w.title, w.created_at
+       GROUP BY w.id, w.slug, w.title, w.created_at, w.owner_id
        ORDER BY w.created_at DESC`,
-      [ownerId],
+      [userId, userId, userId],
     )
 
     return rows.map((row) => ({
@@ -146,6 +152,7 @@ export const wishlistRepository = {
       createdAt: toIsoString(row.created_at),
       itemCount: Number(row.item_count),
       total: Number(row.total),
+      role: row.role,
     }))
   },
 

@@ -65,4 +65,22 @@ export async function initDatabase(): Promise<void> {
         ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `)
+
+  await pool.execute(`
+    CREATE TABLE IF NOT EXISTS wishlist_members (
+      id CHAR(36) PRIMARY KEY,
+      wishlist_id CHAR(36) NOT NULL,
+      user_id CHAR(36) NOT NULL,
+      invited_by CHAR(36) NULL,
+      created_at DATETIME(3) NOT NULL,
+      UNIQUE KEY uq_wishlist_members (wishlist_id, user_id),
+      KEY idx_wishlist_members_user_id (user_id),
+      CONSTRAINT fk_wishlist_members_wishlist
+        FOREIGN KEY (wishlist_id) REFERENCES wishlists(id)
+        ON DELETE CASCADE,
+      CONSTRAINT fk_wishlist_members_user
+        FOREIGN KEY (user_id) REFERENCES users(id)
+        ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+  `)
 }

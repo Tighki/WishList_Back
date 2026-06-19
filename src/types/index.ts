@@ -24,6 +24,15 @@ export interface WishlistPublicDto {
 export interface WishlistSummaryDto extends WishlistPublicDto {
   itemCount: number
   total: number
+  role: 'owner' | 'member'
+}
+
+export interface WishlistMemberDto {
+  id: string
+  userId: string
+  name: string
+  email: string
+  createdAt: string
 }
 
 export interface WishlistItemDto {
