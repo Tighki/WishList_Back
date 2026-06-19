@@ -92,10 +92,12 @@ wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
 
     const editTokenHeader = req.header('x-edit-token')?.trim()
     const items = await wishlistRepository.findItems(wishlist.id)
+    const canEdit = canEditWishlist(wishlist, req.userId, editTokenHeader)
     res.json({
       wishlist: toPublicWishlist(wishlist),
       items,
-      canEdit: canEditWishlist(wishlist, req.userId, editTokenHeader),
+      canEdit,
+      ...(canEdit ? { editToken: wishlist.editToken } : {}),
     })
   } catch (error) {
     next(error)
