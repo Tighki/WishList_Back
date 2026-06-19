@@ -19,7 +19,7 @@ interface WishlistSummaryRow extends RowDataPacket {
   created_at: Date
   item_count: string | number
   total: string | number
-  role: 'owner' | 'member'
+  access_role: 'owner' | 'member'
 }
 
 interface WishlistItemRow extends RowDataPacket {
@@ -124,36 +124,68 @@ export const wishlistRepository = {
 
   async findSummariesForUser(userId: string): Promise<WishlistSummaryDto[]> {
     const pool = getPool()
-    const [rows] = await pool.execute<WishlistSummaryRow[]>(
-      `SELECT
-         w.id,
-         w.slug,
-         w.title,
-         w.created_at,
-         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.quantity ELSE 0 END), 0) AS item_count,
-         COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total,
-         CASE WHEN w.owner_id = ? THEN 'owner' ELSE 'member' END AS role
-       FROM (
-         SELECT id FROM wishlists WHERE owner_id = ?
-         UNION
-         SELECT wishlist_id AS id FROM wishlist_members WHERE user_id = ?
-       ) accessible
-       JOIN wishlists w ON w.id = accessible.id
-       LEFT JOIN wishlist_items i ON i.wishlist_id = w.id
-       GROUP BY w.id, w.slug, w.title, w.created_at, w.owner_id
-       ORDER BY w.created_at DESC`,
-      [userId, userId, userId],
-    )
 
-    return rows.map((row) => ({
-      id: row.id,
-      slug: row.slug,
-      title: row.title,
-      createdAt: toIsoString(row.created_at),
-      itemCount: Number(row.item_count),
-      total: Number(row.total),
-      role: row.role,
-    }))
+    try {
+      const [rows] = await pool.execute<WishlistSummaryRow[]>(
+        `SELECT
+           w.id,
+           w.slug,
+           w.title,
+           w.created_at,
+           COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.quantity ELSE 0 END), 0) AS item_count,
+           COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total,
+           IF(w.owner_id = ?, 'owner', 'member') AS access_role
+         FROM wishlists w
+         LEFT JOIN wishlist_items i ON i.wishlist_id = w.id
+         LEFT JOIN wishlist_members wm ON wm.wishlist_id = w.id AND wm.user_id = ?
+         WHERE w.owner_id = ? OR wm.user_id = ?
+         GROUP BY w.id, w.slug, w.title, w.created_at, w.owner_id
+         ORDER BY w.created_at DESC`,
+        [userId, userId, userId, userId],
+      )
+
+      return rows.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        title: row.title,
+        createdAt: toIsoString(row.created_at),
+        itemCount: Number(row.item_count),
+        total: Number(row.total),
+        role: row.access_role === 'owner' ? 'owner' : 'member',
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('wishlist_members')) {
+        throw error
+      }
+
+      const [rows] = await pool.execute<WishlistSummaryRow[]>(
+        `SELECT
+           w.id,
+           w.slug,
+           w.title,
+           w.created_at,
+           COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.quantity ELSE 0 END), 0) AS item_count,
+           COALESCE(SUM(CASE WHEN i.purchased = 0 THEN i.price * i.quantity ELSE 0 END), 0) AS total,
+           'owner' AS access_role
+         FROM wishlists w
+         LEFT JOIN wishlist_items i ON i.wishlist_id = w.id
+         WHERE w.owner_id = ?
+         GROUP BY w.id, w.slug, w.title, w.created_at, w.owner_id
+         ORDER BY w.created_at DESC`,
+        [userId],
+      )
+
+      return rows.map((row) => ({
+        id: row.id,
+        slug: row.slug,
+        title: row.title,
+        createdAt: toIsoString(row.created_at),
+        itemCount: Number(row.item_count),
+        total: Number(row.total),
+        role: 'owner',
+      }))
+    }
   },
 
   async updateWishlist(

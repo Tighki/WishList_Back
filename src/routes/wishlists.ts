@@ -91,13 +91,24 @@ wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
     const items = await wishlistRepository.findItems(wishlist.id)
     const canEdit = await canEditWishlist(wishlist, req.userId, editTokenHeader)
     const isOwner = isWishlistOwner(wishlist, req.userId)
-    const isMember =
-      Boolean(req.userId) &&
-      !isOwner &&
-      (await memberRepository.isMember(wishlist.id, req.userId!))
+    let isMember = false
+    let members: Awaited<ReturnType<typeof memberRepository.findMembers>> | undefined
 
-    const members =
-      canEdit && req.userId ? await memberRepository.findMembers(wishlist.id) : undefined
+    if (req.userId && !isOwner) {
+      try {
+        isMember = await memberRepository.isMember(wishlist.id, req.userId)
+      } catch {
+        isMember = false
+      }
+    }
+
+    if (canEdit && req.userId) {
+      try {
+        members = await memberRepository.findMembers(wishlist.id)
+      } catch {
+        members = []
+      }
+    }
 
     res.json({
       wishlist: toPublicWishlist(wishlist),

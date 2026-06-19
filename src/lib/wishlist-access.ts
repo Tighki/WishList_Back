@@ -13,5 +13,9 @@ export async function canEditWishlist(
   if (isWishlistOwner(wishlist, userId)) return true
   if (editTokenHeader && wishlist.editToken === editTokenHeader) return true
   if (!userId) return false
-  return memberRepository.isMember(wishlist.id, userId)
+  try {
+    return memberRepository.isMember(wishlist.id, userId)
+  } catch {
+    return false
+  }
 }
