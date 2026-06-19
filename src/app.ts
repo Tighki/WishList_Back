@@ -1,6 +1,7 @@
 import cors from 'cors'
 import express from 'express'
 import { errorHandler } from './middleware/error-handler.js'
+import { authRouter } from './routes/auth.js'
 import { wishlistsRouter } from './routes/wishlists.js'
 
 function getCorsOrigins(): string[] | true {
@@ -33,6 +34,7 @@ export function createApp() {
     res.json({ status: 'ok', service: 'wishlist-backend' })
   })
 
+  app.use('/api/auth', authRouter)
   app.use('/api/wishlists', wishlistsRouter)
   app.use(errorHandler)
 

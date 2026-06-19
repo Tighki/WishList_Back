@@ -1,8 +1,16 @@
+export interface UserDto {
+  id: string
+  email: string
+  name: string
+  createdAt: string
+}
+
 export interface WishlistDto {
   id: string
   slug: string
   title: string
   editToken: string
+  ownerId: string | null
   createdAt: string
 }
 

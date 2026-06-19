@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { wishlistRepository } from '../db/index.js'
-import { requireEditToken } from '../middleware/require-edit-token.js'
+import { optionalAuth, requireAuth } from '../middleware/auth.js'
+import { requireWishlistEditor } from '../middleware/require-wishlist-editor.js'
 import type { WishlistPublicDto } from '../types/index.js'
 
 const createWishlistSchema = z.object({
@@ -40,12 +41,35 @@ function toPublicWishlist(wishlist: {
   }
 }
 
+function canEditWishlist(
+  wishlist: { ownerId: string | null; editToken: string },
+  userId: string | undefined,
+  editTokenHeader: string | undefined,
+): boolean {
+  if (userId && wishlist.ownerId === userId) return true
+  return Boolean(editTokenHeader && wishlist.editToken === editTokenHeader)
+}
+
 export const wishlistsRouter = Router()
 
-wishlistsRouter.post('/', async (req, res, next) => {
+wishlistsRouter.get('/mine', requireAuth, async (req, res, next) => {
+  try {
+    const wishlists = await wishlistRepository.findByOwner(req.userId!)
+    res.json({
+      wishlists: wishlists.map(toPublicWishlist),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+wishlistsRouter.post('/', optionalAuth, async (req, res, next) => {
   try {
     const { title } = createWishlistSchema.parse(req.body ?? {})
-    const { wishlist, editToken } = await wishlistRepository.createWishlist(title ?? 'Мой вишлист')
+    const { wishlist, editToken } = await wishlistRepository.createWishlist(
+      title ?? 'Мой вишлист',
+      req.userId ?? null,
+    )
     res.status(201).json({
       wishlist: toPublicWishlist(wishlist),
       editToken,
@@ -55,7 +79,7 @@ wishlistsRouter.post('/', async (req, res, next) => {
   }
 })
 
-wishlistsRouter.get('/:slug', async (req, res, next) => {
+wishlistsRouter.get('/:slug', optionalAuth, async (req, res, next) => {
   try {
     const slug = typeof req.params.slug === 'string' ? req.params.slug : ''
     const wishlist = await wishlistRepository.findBySlug(slug)
@@ -64,17 +88,19 @@ wishlistsRouter.get('/:slug', async (req, res, next) => {
       return
     }
 
+    const editTokenHeader = req.header('x-edit-token')?.trim()
     const items = await wishlistRepository.findItems(wishlist.id)
     res.json({
       wishlist: toPublicWishlist(wishlist),
       items,
+      canEdit: canEditWishlist(wishlist, req.userId, editTokenHeader),
     })
   } catch (error) {
     next(error)
   }
 })
 
-wishlistsRouter.post('/:slug/items', requireEditToken, async (req, res, next) => {
+wishlistsRouter.post('/:slug/items', optionalAuth, requireWishlistEditor, async (req, res, next) => {
   try {
     const input = createItemSchema.parse(req.body)
     const item = await wishlistRepository.createItem(req.wishlist!.id, input)
@@ -84,31 +110,41 @@ wishlistsRouter.post('/:slug/items', requireEditToken, async (req, res, next) =>
   }
 })
 
-wishlistsRouter.patch('/:slug/items/:id', requireEditToken, async (req, res, next) => {
-  try {
-    const patch = patchItemSchema.parse(req.body)
-    const itemId = typeof req.params.id === 'string' ? req.params.id : ''
-    const item = await wishlistRepository.updateItem(req.wishlist!.id, itemId, patch)
-    if (!item) {
-      res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
-      return
+wishlistsRouter.patch(
+  '/:slug/items/:id',
+  optionalAuth,
+  requireWishlistEditor,
+  async (req, res, next) => {
+    try {
+      const patch = patchItemSchema.parse(req.body)
+      const itemId = typeof req.params.id === 'string' ? req.params.id : ''
+      const item = await wishlistRepository.updateItem(req.wishlist!.id, itemId, patch)
+      if (!item) {
+        res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
+        return
+      }
+      res.json({ item })
+    } catch (error) {
+      next(error)
     }
-    res.json({ item })
-  } catch (error) {
-    next(error)
-  }
-})
+  },
+)
 
-wishlistsRouter.delete('/:slug/items/:id', requireEditToken, async (req, res, next) => {
-  try {
-    const itemId = typeof req.params.id === 'string' ? req.params.id : ''
-    const deleted = await wishlistRepository.deleteItem(req.wishlist!.id, itemId)
-    if (!deleted) {
-      res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
-      return
+wishlistsRouter.delete(
+  '/:slug/items/:id',
+  optionalAuth,
+  requireWishlistEditor,
+  async (req, res, next) => {
+    try {
+      const itemId = typeof req.params.id === 'string' ? req.params.id : ''
+      const deleted = await wishlistRepository.deleteItem(req.wishlist!.id, itemId)
+      if (!deleted) {
+        res.status(404).json({ error: 'Товар не найден', code: 'NOT_FOUND' })
+        return
+      }
+      res.status(204).send()
+    } catch (error) {
+      next(error)
     }
-    res.status(204).send()
-  } catch (error) {
-    next(error)
-  }
-})
+  },
+)

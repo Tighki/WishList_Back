@@ -8,6 +8,7 @@ interface WishlistRow extends RowDataPacket {
   slug: string
   title: string
   edit_token: string
+  owner_id: string | null
   created_at: Date
 }
 
@@ -24,6 +25,9 @@ interface WishlistItemRow extends RowDataPacket {
   created_at: Date
 }
 
+const WISHLIST_COLUMNS =
+  'id, slug, title, edit_token, owner_id, created_at'
+
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString()
 }
@@ -34,6 +38,7 @@ function mapWishlist(row: WishlistRow): WishlistDto {
     slug: row.slug,
     title: row.title,
     editToken: row.edit_token,
+    ownerId: row.owner_id ?? null,
     createdAt: toIsoString(row.created_at),
   }
 }
@@ -67,7 +72,10 @@ async function createSlug(): Promise<string> {
 }
 
 export const wishlistRepository = {
-  async createWishlist(title: string): Promise<{ wishlist: WishlistDto; editToken: string }> {
+  async createWishlist(
+    title: string,
+    ownerId?: string | null,
+  ): Promise<{ wishlist: WishlistDto; editToken: string }> {
     const pool = getPool()
     const editToken = crypto.randomUUID()
     const wishlist: WishlistDto = {
@@ -75,13 +83,21 @@ export const wishlistRepository = {
       slug: await createSlug(),
       title: title.trim() || 'Мой вишлист',
       editToken,
+      ownerId: ownerId ?? null,
       createdAt: new Date().toISOString(),
     }
 
     await pool.execute(
-      `INSERT INTO wishlists (id, slug, title, edit_token, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      [wishlist.id, wishlist.slug, wishlist.title, editToken, new Date(wishlist.createdAt)],
+      `INSERT INTO wishlists (id, slug, title, edit_token, owner_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        wishlist.id,
+        wishlist.slug,
+        wishlist.title,
+        editToken,
+        wishlist.ownerId,
+        new Date(wishlist.createdAt),
+      ],
     )
 
     return { wishlist, editToken }
@@ -90,10 +106,22 @@ export const wishlistRepository = {
   async findBySlug(slug: string): Promise<WishlistDto | null> {
     const pool = getPool()
     const [rows] = await pool.execute<WishlistRow[]>(
-      'SELECT id, slug, title, edit_token, created_at FROM wishlists WHERE slug = ? LIMIT 1',
+      `SELECT ${WISHLIST_COLUMNS} FROM wishlists WHERE slug = ? LIMIT 1`,
       [slug],
     )
     return rows[0] ? mapWishlist(rows[0]) : null
+  },
+
+  async findByOwner(ownerId: string): Promise<WishlistDto[]> {
+    const pool = getPool()
+    const [rows] = await pool.execute<WishlistRow[]>(
+      `SELECT ${WISHLIST_COLUMNS}
+       FROM wishlists
+       WHERE owner_id = ?
+       ORDER BY created_at DESC`,
+      [ownerId],
+    )
+    return rows.map(mapWishlist)
   },
 
   async verifyEditToken(slug: string, token: string): Promise<WishlistDto | null> {
