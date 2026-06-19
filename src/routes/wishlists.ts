@@ -116,6 +116,19 @@ wishlistsRouter.patch('/:slug', optionalAuth, requireWishlistEditor, async (req,
   }
 })
 
+wishlistsRouter.delete('/:slug', optionalAuth, requireWishlistEditor, async (req, res, next) => {
+  try {
+    const deleted = await wishlistRepository.deleteWishlist(req.wishlist!.id)
+    if (!deleted) {
+      res.status(404).json({ error: 'Вишлист не найден', code: 'NOT_FOUND' })
+      return
+    }
+    res.status(204).send()
+  } catch (error) {
+    next(error)
+  }
+})
+
 wishlistsRouter.post('/:slug/items', optionalAuth, requireWishlistEditor, async (req, res, next) => {
   try {
     const input = createItemSchema.parse(req.body)

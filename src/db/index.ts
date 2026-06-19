@@ -121,18 +121,6 @@ export const wishlistRepository = {
     return rows[0] ? mapWishlist(rows[0]) : null
   },
 
-  async findByOwner(ownerId: string): Promise<WishlistDto[]> {
-    const pool = getPool()
-    const [rows] = await pool.execute<WishlistRow[]>(
-      `SELECT ${WISHLIST_COLUMNS}
-       FROM wishlists
-       WHERE owner_id = ?
-       ORDER BY created_at DESC`,
-      [ownerId],
-    )
-    return rows.map(mapWishlist)
-  },
-
   async findSummariesByOwner(ownerId: string): Promise<WishlistSummaryDto[]> {
     const pool = getPool()
     const [rows] = await pool.execute<WishlistSummaryRow[]>(
@@ -183,6 +171,12 @@ export const wishlistRepository = {
       [wishlistId],
     )
     return rows[0] ? mapWishlist(rows[0]) : null
+  },
+
+  async deleteWishlist(wishlistId: string): Promise<boolean> {
+    const pool = getPool()
+    const [result] = await pool.execute('DELETE FROM wishlists WHERE id = ?', [wishlistId])
+    return 'affectedRows' in result && result.affectedRows > 0
   },
 
   async verifyEditToken(slug: string, token: string): Promise<WishlistDto | null> {
